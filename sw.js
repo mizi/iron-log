@@ -1,7 +1,7 @@
 // Offline support: the app shell is precached, page loads try the network first
 // so updates arrive, and Google Fonts are cached as they are fetched.
-const VERSION = "iron-log-v1";
-const SHELL = ["./", "index.html", "manifest.webmanifest", "icons/icon.svg", "icons/icon-192.png", "icons/icon-512.png", "icons/apple-touch-icon.png"];
+const VERSION = "iron-log-v2";
+const SHELL = ["./", "index.html", "sync.js", "manifest.webmanifest", "icons/icon.svg", "icons/icon-192.png", "icons/icon-512.png", "icons/apple-touch-icon.png"];
 
 self.addEventListener("install", event => {
   event.waitUntil(caches.open(VERSION).then(cache => cache.addAll(SHELL)).then(() => self.skipWaiting()));
