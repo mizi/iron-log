@@ -150,6 +150,7 @@ svg text { font-family: var(--mono); font-size: 10px; fill: var(--muted); }
   </nav>
 </div>
 
+<script src="sync.js"></script>
 <script>
 (() => {
   const app = document.getElementById("app");
@@ -184,7 +185,10 @@ svg text { font-family: var(--mono); font-size: 10px; fill: var(--muted); }
     prefs: { exercises: DEFAULT_EXERCISES.slice(), unit: "kg" },
     sessions: new Map(),        // "YYYY-MM-DD" -> { date, sets: [{id, ex, w (kg), r, t}] }
     tab: "today", ex: DEFAULT_EXERCISES[0], w: 20, r: 8, adding: false,
-    saving: "local", confirmClear: false
+    saving: "local", confirmClear: false,
+    prefsUpdatedAt: 0,
+    deleted: {},                // setId -> epoch ms, so deletions reach other devices
+    sync: { state: "off", at: 0, message: "" }
   };
   const unit = () => state.prefs.unit;
   const toDisp = kg => unit() === "lb" ? Math.round(kg * KG_TO_LB * 2) / 2 : Math.round(kg * 100) / 100;
@@ -207,22 +211,64 @@ svg text { font-family: var(--mono); font-size: 10px; fill: var(--muted); }
         .map(x => ({ id: String(x.id || uid()), ex: x.ex.slice(0, 32), w: +x.w, r: Math.round(+x.r), t: String(x.t || "") }));
       if (sets.length) state.sessions.set(k, { date: k, sets });
     }
+    state.prefsUpdatedAt = +(d && d.prefsUpdatedAt) || 0;
+    state.deleted = {};
+    for (const [id, at] of Object.entries(d && d.deleted || {})) if (Number.isFinite(+at)) state.deleted[id] = +at;
     if (!state.prefs.exercises.includes(state.ex)) state.ex = state.prefs.exercises[0];
   }
   function snapshot() {
-    return { app: "iron-log", version: 1, exportedAt: new Date().toISOString(), prefs: state.prefs, sessions: Object.fromEntries(state.sessions) };
+    return { app: "iron-log", version: 1, exportedAt: new Date().toISOString(), prefs: state.prefs, prefsUpdatedAt: state.prefsUpdatedAt,
+      sessions: Object.fromEntries(state.sessions), deleted: state.deleted };
   }
   function load() {
     try { const raw = localStorage.getItem(STORE_KEY); if (raw) applyData(JSON.parse(raw)); }
     catch (_) { state.saving = "off"; }
   }
+  function saveLocal() {
+    try { localStorage.setItem(STORE_KEY, JSON.stringify(snapshot())); }
+    catch (_) { state.saving = "off"; toast("Couldn't save on this device. Export a backup from Settings."); render(); }
+  }
   let saveTimer = null;
-  function persist() {
+  function persist(kind) {
+    if (kind === "prefs") state.prefsUpdatedAt = Date.now();
     clearTimeout(saveTimer);
-    saveTimer = setTimeout(() => {
-      try { localStorage.setItem(STORE_KEY, JSON.stringify(snapshot())); }
-      catch (_) { state.saving = "off"; toast("Couldn't save on this device. Export a backup from Settings."); render(); }
-    }, 150);
+    saveTimer = setTimeout(saveLocal, 150);
+    scheduleSync();
+  }
+
+  // ---------- sync (backend chosen by the saved config; see sync.js) ----------
+  const SYNC_KEY = "iron-log:sync";
+  let engine = null, syncTimer = null;
+  function readSyncConfig() { try { return JSON.parse(localStorage.getItem(SYNC_KEY) || "null"); } catch (_) { return null; } }
+  function setupSync(config) {
+    engine = null;
+    if (!config || !window.IronSync) { state.sync = { state: "off", at: 0, message: "" }; return; }
+    try {
+      engine = new IronSync.SyncEngine(IronSync.createProvider(config), {
+        getLocal: snapshot,
+        applyMerged: merged => { applyData(merged); saveLocal(); }
+      });
+      state.sync = { state: "idle", at: state.sync.at || 0, message: "" };
+    } catch (e) { state.sync = { state: "error", at: 0, message: e.message }; }
+  }
+  async function runSync() {
+    if (!engine) return;
+    if (navigator.onLine === false) { state.sync = { ...state.sync, state: "offline" }; render(); return; }
+    state.sync = { ...state.sync, state: "syncing" }; render();
+    try { await engine.sync(); state.sync = { state: "ok", at: Date.now(), message: "" }; }
+    catch (e) { state.sync = { ...state.sync, state: e && e.kind === "network" ? "offline" : "error", message: (e && e.message) || "Sync failed." }; }
+    render();
+  }
+  function scheduleSync() { if (!engine) return; clearTimeout(syncTimer); syncTimer = setTimeout(runSync, 2000); }
+  function syncLabel() {
+    const s = state.sync;
+    if (s.state === "off") return "Off. Your log is only on this device.";
+    if (s.state === "syncing") return "Syncing…";
+    if (s.state === "offline") return "Offline. Changes will sync when you're back online.";
+    if (s.state === "error") return s.message;
+    if (!s.at) return "Connected. Waiting for the first sync.";
+    const mins = Math.round((Date.now() - s.at) / 60000);
+    return `Synced ${mins < 1 ? "just now" : mins === 1 ? "1 minute ago" : mins < 60 ? `${mins} minutes ago` : new Date(s.at).toLocaleString()}.`;
   }
   // Ask the browser not to clear our data under storage pressure.
   try { navigator.storage && navigator.storage.persist && navigator.storage.persist(); } catch (_) {}
@@ -244,7 +290,7 @@ svg text { font-family: var(--mono); font-size: 10px; fill: var(--muted); }
       try {
         const d = JSON.parse(reader.result);
         if (!d || d.app !== "iron-log") throw new Error();
-        applyData(d); persist(); toast("Backup restored"); render();
+        applyData(window.IronSync ? IronSync.mergeData(snapshot(), d) : d); persist(); toast("Backup restored"); render();
       } catch (_) { toast("That file isn't an Iron Log backup."); }
     };
     reader.readAsText(file);
@@ -296,6 +342,7 @@ svg text { font-family: var(--mono); font-size: 10px; fill: var(--muted); }
     const s = state.sessions.get(key);
     if (!s) return;
     const sets = s.sets.filter(x => x.id !== id);
+    state.deleted = { ...state.deleted, [id]: Date.now() };
     if (sets.length) state.sessions.set(key, { ...s, sets }); else state.sessions.delete(key);
     persist("sessions", key);
     render();
@@ -479,6 +526,46 @@ svg text { font-family: var(--mono); font-size: 10px; fill: var(--muted); }
     ];
   }
 
+  function syncSettings() {
+    const config = readSyncConfig();
+    const small = { className: "muted", style: "font-size:14px" };
+    if (config) {
+      return h("div", { className: "group" }, h("span", { className: "label" }, "Sync"),
+        h("p", { style: "font-size:15px" }, syncLabel()),
+        h("p", small, `Saving to the private GitHub repository ${config.repo}.`),
+        h("div", { className: "row", style: "justify-content:flex-start" },
+          h("button", { type: "button", className: "btn solid", disabled: state.sync.state === "syncing", onclick: runSync }, "Sync now"),
+          h("button", { type: "button", className: "btn quiet", onclick: () => {
+            try { localStorage.removeItem(SYNC_KEY); } catch (_) {}
+            setupSync(null); toast("Sync turned off. Your log stays on this device."); render();
+          } }, "Turn off sync")));
+    }
+    const link = (href, text) => h("a", { href, target: "_blank", rel: "noopener", style: "color:var(--plate)" }, text);
+    const form = h("form", { className: "group", onsubmit: e => {
+      e.preventDefault();
+      const repo = document.getElementById("syncrepo").value.trim().replace(/^https:\/\/github\.com\//, "").replace(/\/$/, "");
+      const token = document.getElementById("synctoken").value.trim();
+      if (!/^[\w.-]+\/[\w.-]+$/.test(repo)) return toast("Enter the repository as owner/name.");
+      if (!token) return toast("Paste the access token first.");
+      const cfg = { provider: "github", repo, token };
+      try { localStorage.setItem(SYNC_KEY, JSON.stringify(cfg)); } catch (_) { return toast("This browser won't store the sync settings."); }
+      setupSync(cfg); runSync();
+    } },
+      h("span", { className: "label" }, "Sync"),
+      h("p", small, "Keep a copy of your log in a private GitHub repository and use it on more than one device."),
+      h("ol", { style: "margin:0;padding-left:20px;font-size:14px;display:flex;flex-direction:column;gap:4px" },
+        h("li", null, link("https://github.com/new", "Create a private repository"), ", for example iron-log-data. Tick Add a README."),
+        h("li", null, link("https://github.com/settings/personal-access-tokens/new", "Create a fine-grained token"), ": Only select repositories → that repository, then Repository permissions → Contents → Read and write."),
+        h("li", null, "Enter both below. Do the same on each device.")),
+      h("input", { id: "syncrepo", placeholder: "owner/iron-log-data", autocomplete: "off", autocapitalize: "off", spellcheck: false,
+        style: "border:1px solid var(--line);background:var(--bg);border-radius:10px;padding:9px 12px" }),
+      h("input", { id: "synctoken", type: "password", placeholder: "github_pat_…", autocomplete: "off",
+        style: "border:1px solid var(--line);background:var(--bg);border-radius:10px;padding:9px 12px" }),
+      h("p", small, "The token is stored only on this device and is sent only to GitHub."),
+      h("div", { className: "row", style: "justify-content:flex-start" }, h("button", { className: "btn solid", type: "submit" }, "Turn on sync")));
+    return form;
+  }
+
   function settingsView() {
     const unitBtn = u => h("button", { type: "button", className: "chip", "aria-pressed": String(unit() === u),
       onclick: () => { if (unit() !== u) { const kg = toKg(state.w); state.prefs = { ...state.prefs, unit: u }; state.w = toDisp(kg); persist("prefs", "me"); render(); } } }, u);
@@ -492,7 +579,10 @@ svg text { font-family: var(--mono); font-size: 10px; fill: var(--muted); }
     const clear = state.confirmClear
       ? h("div", { className: "row" }, h("span", null, "Delete every logged set? This can't be undone."),
           h("button", { type: "button", className: "btn solid", onclick: () => {
-            for (const k of [...state.sessions.keys()]) { state.sessions.delete(k); persist("sessions", k); }
+            const now = Date.now(), deleted = { ...state.deleted };
+            for (const s of allSets()) deleted[s.id] = now;
+            state.deleted = deleted;
+            state.sessions.clear(); persist("sessions");
             state.confirmClear = false; toast("History cleared"); render();
           } }, "Delete all"),
           h("button", { type: "button", className: "btn quiet", onclick: () => { state.confirmClear = false; render(); } }, "Keep"))
@@ -504,6 +594,7 @@ svg text { font-family: var(--mono); font-size: 10px; fill: var(--muted); }
         h("p", { className: "muted", style: "font-size:14px" }, "Changing the unit converts everything you've logged. Nothing is lost.")),
       h("div", { className: "group" }, h("span", { className: "label" }, "Exercises"), exList,
         h("p", { className: "muted", style: "font-size:14px" }, "Removing an exercise hides it from the picker. Its history stays.")),
+      syncSettings(),
       h("div", { className: "group" }, h("span", { className: "label" }, "Backup"),
         h("p", { className: "muted", style: "font-size:14px" }, "Your log is stored only on this device. Export a backup now and then, and import it on a new phone."),
         h("div", { className: "row", style: "justify-content:flex-start" },
@@ -532,9 +623,13 @@ svg text { font-family: var(--mono); font-size: 10px; fill: var(--muted); }
   }
 
   load();
+  setupSync(readSyncConfig());
   selectExercise(state.ex);
   showClock(+restlen.value);
   render();
+  runSync();
+  document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") runSync(); });
+  window.addEventListener("online", runSync);
   if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
 })();
 </script>
