@@ -1,0 +1,542 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Iron Log</title>
+<meta name="description" content="A phone-first workout log with a rest timer, personal bests and weekly volume.">
+<meta name="theme-color" content="#f1f2f0" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#111314" media="(prefers-color-scheme: dark)">
+<meta name="color-scheme" content="light dark">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Iron Log">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&family=Barlow:wght@400;500;600&family=JetBrains+Mono:wght@500;700&display=swap">
+<style>
+/* Layout: phone app. Header + scrolling content, rest timer and tab bar pinned to the bottom like a gym-floor remote. */
+:root {
+  --bg: #f1f2f0;
+  --surface: #ffffff;
+  --fg: #16181a;
+  --muted: #62686e;
+  --line: #d9dcd8;
+  --plate: #c8281c;      /* competition-plate red */
+  --on-plate: #ffffff;
+  --good: #1d7a46;
+  --display: "Barlow Condensed", "Arial Narrow", system-ui, sans-serif;
+  --body: "Barlow", system-ui, -apple-system, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #111314; --surface: #1b1e20; --fg: #eceeec; --muted: #9aa1a6; --line: #2c3033;
+    --plate: #ff5a4a; --on-plate: #160a08; --good: #4fd18a; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #111314; --surface: #1b1e20; --fg: #eceeec; --muted: #9aa1a6; --line: #2c3033;
+  --plate: #ff5a4a; --on-plate: #160a08; --good: #4fd18a; color-scheme: dark;
+}
+html, body { min-height: 100%; }
+[hidden] { display: none !important; }
+body {
+  margin: 0;
+  background: var(--bg); color: var(--fg); font: 16px/1.45 var(--body);
+  padding-inline: max(16px, env(safe-area-inset-left, 0px)) max(16px, env(safe-area-inset-right, 0px));
+  padding-block: calc(16px + env(safe-area-inset-top, 0px)) calc(170px + env(safe-area-inset-bottom, 0px));
+  overscroll-behavior-y: none;
+  -webkit-tap-highlight-color: transparent;
+}
+.wrap { max-width: 520px; margin: 0 auto; display: flex; flex-direction: column; gap: 18px; }
+h1, h2 { font-family: var(--display); font-weight: 700; margin: 0; text-transform: uppercase; letter-spacing: 0.02em; line-height: 1; text-wrap: balance; }
+h1 { font-size: 34px; }
+h2 { font-size: 22px; }
+.label { font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.1em; color: var(--muted); }
+p { margin: 0; }
+.muted { color: var(--muted); }
+.num { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+button, input, select { font: inherit; color: inherit; }
+button { cursor: pointer; }
+:focus-visible { outline: 2px solid var(--plate); outline-offset: 2px; }
+.top { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
+.note { font-size: 13px; color: var(--muted); border: 1px dashed var(--line); border-radius: 10px; padding: 10px 12px; }
+
+/* Exercise chips */
+.chips { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 4px; scrollbar-width: none; margin-inline: -16px; padding-inline: 16px; }
+.chip { flex: none; border: 1px solid var(--line); background: var(--surface); border-radius: 999px; padding: 8px 14px; font-weight: 600; font-size: 14px; white-space: nowrap; }
+.chip[aria-pressed="true"] { background: var(--fg); color: var(--bg); border-color: var(--fg); }
+.chip.add { border-style: dashed; color: var(--muted); background: transparent; }
+
+/* Logger card */
+.logger { background: var(--surface); border: 1px solid var(--line); border-radius: 18px; padding: 16px; display: flex; flex-direction: column; gap: 14px; }
+.hint { font-size: 14px; color: var(--muted); }
+.hint b { color: var(--fg); font-weight: 600; }
+.steppers { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; }
+.stepper { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.stepper .ctl { display: grid; grid-template-columns: 44px minmax(0, 1fr) 44px; align-items: center; border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
+.stepper button { height: 52px; border: none; background: var(--bg); font-size: 22px; font-weight: 600; }
+.stepper input { border: none; background: transparent; text-align: center; font: 700 24px var(--mono); width: 100%; min-width: 0; padding: 0; }
+.log-btn { height: 56px; border: none; border-radius: 14px; background: var(--plate); color: var(--on-plate); font: 700 22px var(--display); text-transform: uppercase; letter-spacing: 0.06em; }
+.addrow { display: flex; gap: 8px; }
+.addrow input { flex: 1; min-width: 0; border: 1px solid var(--line); background: var(--bg); border-radius: 10px; padding: 9px 12px; }
+.btn { border: 1px solid var(--line); background: var(--surface); border-radius: 10px; padding: 9px 14px; font-weight: 600; }
+.btn.solid { background: var(--fg); color: var(--bg); border-color: var(--fg); }
+.btn.quiet { border-color: transparent; background: transparent; color: var(--muted); }
+
+/* Today's sets */
+.group { display: flex; flex-direction: column; gap: 6px; }
+.group-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+.sets { list-style: none; margin: 0; padding: 0; }
+.sets li { display: grid; grid-template-columns: 28px minmax(0, 1fr) auto 32px; gap: 10px; align-items: center; padding: 8px 0; border-top: 1px solid var(--line); }
+.sets .n { font: 700 13px var(--mono); color: var(--muted); }
+.sets .w { font: 500 17px var(--mono); }
+.pr { font: 700 11px var(--body); letter-spacing: 0.08em; text-transform: uppercase; color: var(--good); }
+.x { border: none; background: none; color: var(--muted); font-size: 20px; line-height: 1; padding: 4px; }
+.empty { color: var(--muted); padding: 8px 0; }
+.totals { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.totals div { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; min-width: 0; }
+.totals strong { display: block; font: 700 22px var(--mono); }
+
+/* History */
+.sessions { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.sessions li { padding: 12px 0; border-top: 1px solid var(--line); display: flex; flex-direction: column; gap: 2px; }
+.sessions li:first-child { border-top: none; }
+.row { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; flex-wrap: wrap; }
+.bests { width: 100%; border-collapse: collapse; font-size: 15px; }
+.bests th { text-align: left; font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); font-weight: 600; padding: 6px 0; }
+.bests td { padding: 8px 0; border-top: 1px solid var(--line); }
+.bests td + td, .bests th + th { text-align: right; }
+svg text { font-family: var(--mono); font-size: 10px; fill: var(--muted); }
+
+/* Bottom: rest timer + tabs */
+.dock { position: fixed; left: 0; right: 0; bottom: 0; background: var(--surface); border-top: 1px solid var(--line); padding-bottom: env(safe-area-inset-bottom, 0px); }
+.rest { display: flex; align-items: center; gap: 12px; padding: 10px 16px; border-bottom: 1px solid var(--line); max-width: 520px; margin: 0 auto; }
+.rest .clock { font: 700 26px var(--mono); min-width: 4.2ch; }
+.rest .clock.done { color: var(--good); }
+.rest .bar { flex: 1; height: 6px; background: var(--line); border-radius: 3px; overflow: hidden; }
+.rest .bar i { display: block; height: 100%; background: var(--plate); }
+.rest select { border: 1px solid var(--line); background: var(--bg); border-radius: 8px; padding: 4px 6px; font-size: 13px; }
+.tabs { display: grid; grid-template-columns: 1fr 1fr 1fr; max-width: 520px; margin: 0 auto; }
+.tabs button { border: none; background: none; padding: 12px 0 14px; font: 700 15px var(--display); text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); }
+.tabs button[aria-current="page"] { color: var(--plate); }
+.toast { position: fixed; left: 16px; right: 16px; bottom: calc(132px + env(safe-area-inset-bottom, 0px)); max-width: 488px; margin: 0 auto; background: var(--fg); color: var(--bg); border-radius: 12px; padding: 12px 14px; font-size: 15px; }
+@media (max-width: 360px) { .steppers { grid-template-columns: minmax(0, 1fr); } }
+</style>
+</head>
+<body>
+
+<div class="wrap" id="app"></div>
+<div class="toast" id="toast" hidden></div>
+<div class="dock">
+  <div class="rest" id="rest">
+    <span class="label">Rest</span>
+    <span class="clock num" id="clock">1:30</span>
+    <span class="bar"><i id="restbar" style="width:0%"></i></span>
+    <select id="restlen" aria-label="Rest length">
+      <option value="60">1:00</option><option value="90" selected>1:30</option><option value="120">2:00</option><option value="180">3:00</option><option value="300">5:00</option>
+    </select>
+    <button class="btn quiet" id="reststart" type="button">Start</button>
+  </div>
+  <nav class="tabs" aria-label="Sections">
+    <button type="button" data-tab="today">Today</button>
+    <button type="button" data-tab="history">History</button>
+    <button type="button" data-tab="settings">Settings</button>
+  </nav>
+</div>
+
+<script>
+(() => {
+  const app = document.getElementById("app");
+  const toastEl = document.getElementById("toast");
+  const KG_TO_LB = 2.20462;
+  const DEFAULT_EXERCISES = ["Squat", "Bench press", "Deadlift", "Overhead press", "Barbell row", "Pull-up", "Romanian deadlift", "Lunge"];
+
+  // ---------- helpers ----------
+  function h(tag, attrs, ...kids) {
+    const el = document.createElement(tag);
+    for (const [k, v] of Object.entries(attrs || {})) {
+      if (v == null || v === false) continue;
+      if (k.startsWith("on")) el.addEventListener(k.slice(2), v);
+      else if (k in el && !k.includes("-") && k !== "style") el[k] = v;
+      else el.setAttribute(k, v);
+    }
+    for (const kid of kids.flat()) if (kid != null && kid !== false) el.append(kid instanceof Node ? kid : String(kid));
+    return el;
+  }
+  const pad = n => String(n).padStart(2, "0");
+  const dayKey = d => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  const today = () => dayKey(new Date());
+  const parseDay = k => { const [y, m, d] = k.split("-").map(Number); return new Date(y, m - 1, d); };
+  const niceDay = k => parseDay(k).toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
+  const uid = () => (crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36) + Math.random().toString(36).slice(2));
+  const e1rm = (w, r) => (r <= 1 ? w : w * (1 + r / 30)); // Epley
+  let toastTimer;
+  function toast(msg) { toastEl.textContent = msg; toastEl.hidden = false; clearTimeout(toastTimer); toastTimer = setTimeout(() => { toastEl.hidden = true; }, 3000); }
+
+  // ---------- state ----------
+  const state = {
+    prefs: { exercises: DEFAULT_EXERCISES.slice(), unit: "kg" },
+    sessions: new Map(),        // "YYYY-MM-DD" -> { date, sets: [{id, ex, w (kg), r, t}] }
+    tab: "today", ex: DEFAULT_EXERCISES[0], w: 20, r: 8, adding: false,
+    saving: "local", confirmClear: false
+  };
+  const unit = () => state.prefs.unit;
+  const toDisp = kg => unit() === "lb" ? Math.round(kg * KG_TO_LB * 2) / 2 : Math.round(kg * 100) / 100;
+  const toKg = v => unit() === "lb" ? v / KG_TO_LB : v;
+  const step = () => unit() === "lb" ? 5 : 2.5;
+  const fmtW = kg => `${toDisp(kg).toLocaleString()}`;
+
+  // ---------- storage: everything lives on this device ----------
+  const STORE_KEY = "iron-log:v1";
+  function applyData(d) {
+    const prefs = d && d.prefs || {};
+    state.prefs = {
+      exercises: Array.isArray(prefs.exercises) && prefs.exercises.length ? prefs.exercises.map(String).slice(0, 100) : DEFAULT_EXERCISES.slice(),
+      unit: prefs.unit === "lb" ? "lb" : "kg"
+    };
+    state.sessions.clear();
+    for (const [k, s] of Object.entries(d && d.sessions || {})) {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(k) || !s || !Array.isArray(s.sets)) continue;
+      const sets = s.sets.filter(x => x && typeof x.ex === "string" && Number.isFinite(+x.w) && Number.isFinite(+x.r))
+        .map(x => ({ id: String(x.id || uid()), ex: x.ex.slice(0, 32), w: +x.w, r: Math.round(+x.r), t: String(x.t || "") }));
+      if (sets.length) state.sessions.set(k, { date: k, sets });
+    }
+    if (!state.prefs.exercises.includes(state.ex)) state.ex = state.prefs.exercises[0];
+  }
+  function snapshot() {
+    return { app: "iron-log", version: 1, exportedAt: new Date().toISOString(), prefs: state.prefs, sessions: Object.fromEntries(state.sessions) };
+  }
+  function load() {
+    try { const raw = localStorage.getItem(STORE_KEY); if (raw) applyData(JSON.parse(raw)); }
+    catch (_) { state.saving = "off"; }
+  }
+  let saveTimer = null;
+  function persist() {
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(() => {
+      try { localStorage.setItem(STORE_KEY, JSON.stringify(snapshot())); }
+      catch (_) { state.saving = "off"; toast("Couldn't save on this device. Export a backup from Settings."); render(); }
+    }, 150);
+  }
+  // Ask the browser not to clear our data under storage pressure.
+  try { navigator.storage && navigator.storage.persist && navigator.storage.persist(); } catch (_) {}
+
+  async function exportBackup() {
+    const name = `iron-log-${today()}.json`;
+    const blob = new Blob([JSON.stringify(snapshot(), null, 2)], { type: "application/json" });
+    try {
+      const file = new File([blob], name, { type: "application/json" });
+      if (navigator.canShare && navigator.canShare({ files: [file] })) { await navigator.share({ files: [file], title: "Iron Log backup" }); return; }
+    } catch (e) { if (e && e.name === "AbortError") return; }
+    const a = h("a", { href: URL.createObjectURL(blob), download: name });
+    document.body.append(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  }
+  function importBackup(file) {
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const d = JSON.parse(reader.result);
+        if (!d || d.app !== "iron-log") throw new Error();
+        applyData(d); persist(); toast("Backup restored"); render();
+      } catch (_) { toast("That file isn't an Iron Log backup."); }
+    };
+    reader.readAsText(file);
+  }
+
+  // ---------- derived ----------
+  function allSets() {
+    const out = [];
+    for (const [date, s] of state.sessions) for (const set of s.sets || []) out.push({ ...set, date });
+    return out;
+  }
+  function bestFor(ex, excludeId) {
+    let w = 0, e = 0;
+    for (const s of allSets()) if (s.ex === ex && s.id !== excludeId) { w = Math.max(w, s.w); e = Math.max(e, e1rm(s.w, s.r)); }
+    return { w, e };
+  }
+  function lastSession(ex) {
+    const days = [...state.sessions.keys()].filter(k => k < today()).sort().reverse();
+    for (const k of days) { const sets = (state.sessions.get(k).sets || []).filter(s => s.ex === ex); if (sets.length) return { date: k, sets }; }
+    return null;
+  }
+
+  // ---------- actions ----------
+  function selectExercise(ex) {
+    state.ex = ex;
+    const todaySets = ((state.sessions.get(today()) || {}).sets || []).filter(s => s.ex === ex);
+    const ref = todaySets.length ? todaySets[todaySets.length - 1] : (lastSession(ex) || { sets: [] }).sets.slice(-1)[0];
+    if (ref) { state.w = toDisp(ref.w); state.r = ref.r; }
+    render();
+  }
+  function logSet() {
+    const w = Number(state.w), r = Math.round(Number(state.r));
+    if (!Number.isFinite(w) || w < 0) return toast("Weight needs a number (0 for bodyweight).");
+    if (!Number.isFinite(r) || r < 1) return toast("Reps need to be at least 1.");
+    const kg = Math.round(toKg(w) * 1000) / 1000;
+    const prior = bestFor(state.ex);
+    const now = new Date();
+    const key = today();
+    const s = state.sessions.get(key) || { date: key, sets: [] };
+    state.sessions.set(key, { ...s, sets: [...(s.sets || []), { id: uid(), ex: state.ex, w: kg, r, t: `${pad(now.getHours())}:${pad(now.getMinutes())}` }] });
+    persist("sessions", key);
+    const isPR = (kg > prior.w && prior.w > 0) || (e1rm(kg, r) > prior.e && prior.e > 0);
+    toast(isPR ? `New best on ${state.ex}` : "Set logged. Rest started.");
+    startRest();
+    render();
+  }
+  function removeSet(id) {
+    const key = today();
+    const s = state.sessions.get(key);
+    if (!s) return;
+    const sets = s.sets.filter(x => x.id !== id);
+    if (sets.length) state.sessions.set(key, { ...s, sets }); else state.sessions.delete(key);
+    persist("sessions", key);
+    render();
+  }
+  function addExercise(name) {
+    name = name.trim().slice(0, 32);
+    if (!name) return;
+    if (!state.prefs.exercises.some(e => e.toLowerCase() === name.toLowerCase())) {
+      state.prefs = { ...state.prefs, exercises: [...state.prefs.exercises, name] };
+      persist("prefs", "me");
+    }
+    state.adding = false;
+    selectExercise(name);
+  }
+
+  // ---------- rest timer ----------
+  const clock = document.getElementById("clock"), restbar = document.getElementById("restbar");
+  const restlen = document.getElementById("restlen"), restBtn = document.getElementById("reststart");
+  let restEnd = 0, restTotal = 90, tick = null, audio = null, wake = null;
+  const showClock = s => { clock.textContent = `${Math.floor(s / 60)}:${pad(s % 60)}`; };
+  function beep() {
+    try {
+      audio = audio || new (window.AudioContext || window.webkitAudioContext)();
+      [0, 0.25, 0.5].forEach(t => {
+        const o = audio.createOscillator(), g = audio.createGain();
+        o.frequency.value = 880; g.gain.value = 0.15; o.connect(g); g.connect(audio.destination);
+        o.start(audio.currentTime + t); o.stop(audio.currentTime + t + 0.15);
+      });
+    } catch (_) {}
+    try { navigator.vibrate && navigator.vibrate([200, 100, 200]); } catch (_) {}
+  }
+  function stopRest(finished) {
+    clearInterval(tick); tick = null; restEnd = 0;
+    restBtn.textContent = "Start";
+    restbar.style.width = finished ? "100%" : "0%";
+    clock.classList.toggle("done", !!finished);
+    if (!finished) showClock(+restlen.value);
+    else clock.textContent = "Go";
+    if (wake) { wake.release().catch(() => {}); wake = null; }
+  }
+  function startRest() {
+    try { audio = audio || new (window.AudioContext || window.webkitAudioContext)(); } catch (_) {}
+    restTotal = +restlen.value; restEnd = Date.now() + restTotal * 1000;
+    clock.classList.remove("done"); restBtn.textContent = "Stop";
+    try { navigator.wakeLock && navigator.wakeLock.request("screen").then(l => { wake = l; }).catch(() => {}); } catch (_) {}
+    clearInterval(tick);
+    const run = () => {
+      const left = Math.max(0, Math.ceil((restEnd - Date.now()) / 1000));
+      showClock(left);
+      restbar.style.width = `${100 - (left / restTotal) * 100}%`;
+      if (left === 0) { stopRest(true); beep(); }
+    };
+    run(); tick = setInterval(run, 250);
+  }
+  restBtn.addEventListener("click", () => (tick ? stopRest(false) : startRest()));
+  restlen.addEventListener("change", () => { if (!tick) stopRest(false); });
+
+  // ---------- views ----------
+  function saveNote() {
+    if (state.saving !== "off") return null;
+    return h("p", { className: "note" }, "This browser isn't letting Iron Log save, so sets last until you close it. Turn off private browsing, or export a backup from Settings.");
+  }
+
+  function stepper(id, label, value, delta, onSet) {
+    const input = h("input", { id, value, inputMode: "decimal", autocomplete: "off", "aria-label": label,
+      oninput: () => { const n = parseFloat(input.value); onSet(Number.isFinite(n) ? n : 0); } });
+    const bump = d => { const n = Math.max(0, Math.round(((parseFloat(input.value) || 0) + d) * 100) / 100); onSet(n); input.value = n; };
+    return h("div", { className: "stepper" }, h("span", { className: "label" }, label),
+      h("div", { className: "ctl" },
+        h("button", { type: "button", "aria-label": `Less ${label}`, onclick: () => bump(-delta) }, "−"),
+        input,
+        h("button", { type: "button", "aria-label": `More ${label}`, onclick: () => bump(delta) }, "+")));
+  }
+
+  function todayView() {
+    const sets = (state.sessions.get(today()) || {}).sets || [];
+    const last = lastSession(state.ex);
+    const best = bestFor(state.ex);
+    const hint = [];
+    if (last) hint.push("Last time (", niceDay(last.date), "): ", h("b", { className: "num" }, last.sets.map(s => `${fmtW(s.w)}×${s.r}`).join(", ")));
+    else hint.push("First time logging this one.");
+    if (best.w) hint.push(" · Best ", h("b", { className: "num" }, `${fmtW(best.w)} ${unit()}`));
+
+    const chips = h("div", { className: "chips", role: "group", "aria-label": "Exercise" },
+      state.prefs.exercises.map(ex => h("button", { type: "button", className: "chip", "aria-pressed": String(ex === state.ex), onclick: () => selectExercise(ex) }, ex)),
+      h("button", { type: "button", className: "chip add", onclick: () => { state.adding = true; render(); document.getElementById("newex")?.focus(); } }, "+ Exercise"));
+
+    const adder = state.adding ? h("form", { className: "addrow", onsubmit: e => { e.preventDefault(); addExercise(document.getElementById("newex").value); } },
+      h("input", { id: "newex", placeholder: "e.g. Hip thrust", autocomplete: "off" }),
+      h("button", { className: "btn solid", type: "submit" }, "Add"),
+      h("button", { className: "btn quiet", type: "button", onclick: () => { state.adding = false; render(); } }, "Cancel")) : null;
+
+    const logger = h("div", { className: "logger" },
+      h("div", { className: "row" }, h("h2", null, state.ex)),
+      h("p", { className: "hint" }, hint),
+      h("div", { className: "steppers" },
+        stepper("w", `Weight (${unit()})`, state.w, step(), v => { state.w = v; }),
+        stepper("r", "Reps", state.r, 1, v => { state.r = Math.round(v); })),
+      h("button", { className: "log-btn", type: "button", onclick: logSet }, "Log set"));
+
+    // group today's sets by exercise, in the order first done
+    const groups = new Map();
+    for (const s of sets) { if (!groups.has(s.ex)) groups.set(s.ex, []); groups.get(s.ex).push(s); }
+    const volume = sets.reduce((a, s) => a + s.w * s.r, 0);
+    const list = sets.length ? [...groups].map(([ex, xs]) => {
+      const prior = bestFor(ex, null);
+      return h("div", { className: "group" },
+        h("div", { className: "group-head" }, h("strong", null, ex), h("span", { className: "muted num" }, `${xs.length} ${xs.length === 1 ? "set" : "sets"}`)),
+        h("ul", { className: "sets" }, xs.map((s, i) => {
+          const others = bestFor(ex, s.id);
+          const pr = others.w > 0 && (s.w > others.w || e1rm(s.w, s.r) > others.e);
+          return h("li", null,
+            h("span", { className: "n" }, String(i + 1)),
+            h("span", { className: "w" }, `${fmtW(s.w)} ${unit()} × ${s.r}`),
+            pr ? h("span", { className: "pr" }, "Best") : h("span", { className: "muted num", style: "font-size:12px" }, s.t),
+            h("button", { className: "x", type: "button", "aria-label": `Delete set ${i + 1}`, onclick: () => removeSet(s.id) }, "×"));
+        })));
+    }) : h("p", { className: "empty" }, "No sets yet today. Pick an exercise, set weight and reps, then tap Log set.");
+
+    return [
+      h("div", { className: "top" }, h("h1", null, "Iron Log"), h("span", { className: "muted num" }, niceDay(today()))),
+      saveNote(), chips, adder, logger,
+      sets.length ? h("div", { className: "totals" },
+        h("div", null, h("span", { className: "label" }, "Sets"), h("strong", null, String(sets.length))),
+        h("div", null, h("span", { className: "label" }, "Exercises"), h("strong", null, String(groups.size))),
+        h("div", null, h("span", { className: "label" }, `Volume ${unit()}`), h("strong", null, Math.round(toDisp(volume)).toLocaleString()))) : null,
+      h("div", { className: "group" }, h("span", { className: "label" }, "Today"), list)
+    ];
+  }
+
+  function weeksChart() {
+    const monday = d => { const x = new Date(d.getFullYear(), d.getMonth(), d.getDate()); x.setDate(x.getDate() - ((x.getDay() + 6) % 7)); return x; };
+    const start = monday(new Date());
+    const weeks = [];
+    for (let i = 7; i >= 0; i--) { const w = new Date(start); w.setDate(w.getDate() - i * 7); weeks.push({ start: w, vol: 0 }); }
+    for (const s of allSets()) {
+      const wk = monday(parseDay(s.date)).getTime();
+      const slot = weeks.find(w => w.start.getTime() === wk);
+      if (slot) slot.vol += toDisp(s.w) * s.r;
+    }
+    const max = Math.max(1, ...weeks.map(w => w.vol));
+    const W = 320, H = 150, top = 18, bottom = 22, ch = H - top - bottom, slot = W / 8, bw = slot * 0.58;
+    const ns = "http://www.w3.org/2000/svg";
+    const s = (tag, a, t) => { const e = document.createElementNS(ns, tag); for (const k in a) e.setAttribute(k, a[k]); if (t != null) e.textContent = t; return e; };
+    const svg = s("svg", { viewBox: `0 0 ${W} ${H}`, width: "100%", role: "img", "aria-label": `Weekly volume in ${unit()}, last 8 weeks` });
+    svg.append(s("line", { x1: 0, x2: W, y1: top + ch, y2: top + ch, stroke: "var(--line)" }));
+    weeks.forEach((w, i) => {
+      const hgt = (w.vol / max) * ch, x = i * slot + (slot - bw) / 2;
+      svg.append(s("rect", { x, y: top + ch - hgt, width: bw, height: hgt, rx: 3, fill: "var(--plate)", "fill-opacity": i === 7 ? 1 : 0.45 }));
+      if (w.vol) svg.append(s("text", { x: x + bw / 2, y: top + ch - hgt - 4, "text-anchor": "middle" }, w.vol >= 10000 ? `${Math.round(w.vol / 1000)}k` : Math.round(w.vol).toLocaleString()));
+      svg.append(s("text", { x: x + bw / 2, y: H - 6, "text-anchor": "middle" }, i === 7 ? "this wk" : `${w.start.getMonth() + 1}/${w.start.getDate()}`));
+    });
+    return svg;
+  }
+
+  function historyView() {
+    const days = [...state.sessions.keys()].sort().reverse();
+    const bests = new Map();
+    for (const s of allSets()) {
+      const b = bests.get(s.ex) || { w: 0, e: 0 };
+      bests.set(s.ex, { w: Math.max(b.w, s.w), e: Math.max(b.e, e1rm(s.w, s.r)) });
+    }
+    return [
+      h("div", { className: "top" }, h("h1", null, "History")),
+      saveNote(),
+      h("div", { className: "group" }, h("span", { className: "label" }, `Weekly volume (${unit()})`), weeksChart()),
+      bests.size ? h("div", { className: "group" }, h("span", { className: "label" }, "Personal bests"),
+        h("table", { className: "bests" },
+          h("thead", null, h("tr", null, h("th", null, "Exercise"), h("th", null, "Heaviest"), h("th", null, "Est. 1-rep max"))),
+          h("tbody", null, [...bests].sort((a, b) => a[0].localeCompare(b[0])).map(([ex, b]) =>
+            h("tr", null, h("td", null, ex), h("td", { className: "num" }, `${fmtW(b.w)}`), h("td", { className: "num" }, `${fmtW(b.e)}`)))))) : null,
+      h("div", { className: "group" }, h("span", { className: "label" }, "Sessions"),
+        days.length ? h("ul", { className: "sessions" }, days.slice(0, 60).map(k => {
+          const sets = state.sessions.get(k).sets || [];
+          const exs = [...new Set(sets.map(s => s.ex))];
+          const vol = sets.reduce((a, s) => a + toDisp(s.w) * s.r, 0);
+          return h("li", null,
+            h("div", { className: "row" }, h("strong", null, niceDay(k)), h("span", { className: "muted num" }, `${sets.length} sets · ${Math.round(vol).toLocaleString()} ${unit()}`)),
+            h("span", { className: "muted" }, exs.join(", ")));
+        })) : h("p", { className: "empty" }, "Your past sessions show up here after your first workout."))
+    ];
+  }
+
+  function settingsView() {
+    const unitBtn = u => h("button", { type: "button", className: "chip", "aria-pressed": String(unit() === u),
+      onclick: () => { if (unit() !== u) { const kg = toKg(state.w); state.prefs = { ...state.prefs, unit: u }; state.w = toDisp(kg); persist("prefs", "me"); render(); } } }, u);
+    const exList = h("ul", { className: "sessions" }, state.prefs.exercises.map(ex => h("li", null,
+      h("div", { className: "row" }, h("span", null, ex),
+        state.prefs.exercises.length > 1 ? h("button", { type: "button", className: "btn quiet", onclick: () => {
+          state.prefs = { ...state.prefs, exercises: state.prefs.exercises.filter(e => e !== ex) };
+          if (state.ex === ex) state.ex = state.prefs.exercises[0];
+          persist("prefs", "me"); render();
+        } }, "Remove") : null))));
+    const clear = state.confirmClear
+      ? h("div", { className: "row" }, h("span", null, "Delete every logged set? This can't be undone."),
+          h("button", { type: "button", className: "btn solid", onclick: () => {
+            for (const k of [...state.sessions.keys()]) { state.sessions.delete(k); persist("sessions", k); }
+            state.confirmClear = false; toast("History cleared"); render();
+          } }, "Delete all"),
+          h("button", { type: "button", className: "btn quiet", onclick: () => { state.confirmClear = false; render(); } }, "Keep"))
+      : h("button", { type: "button", className: "btn", onclick: () => { state.confirmClear = true; render(); } }, "Clear history…");
+    return [
+      h("div", { className: "top" }, h("h1", null, "Settings")),
+      saveNote(),
+      h("div", { className: "group" }, h("span", { className: "label" }, "Weight unit"), h("div", { className: "chips" }, unitBtn("kg"), unitBtn("lb")),
+        h("p", { className: "muted", style: "font-size:14px" }, "Changing the unit converts everything you've logged. Nothing is lost.")),
+      h("div", { className: "group" }, h("span", { className: "label" }, "Exercises"), exList,
+        h("p", { className: "muted", style: "font-size:14px" }, "Removing an exercise hides it from the picker. Its history stays.")),
+      h("div", { className: "group" }, h("span", { className: "label" }, "Backup"),
+        h("p", { className: "muted", style: "font-size:14px" }, "Your log is stored only on this device. Export a backup now and then, and import it on a new phone."),
+        h("div", { className: "row", style: "justify-content:flex-start" },
+          h("button", { type: "button", className: "btn", onclick: exportBackup }, "Export backup"),
+          h("label", { className: "btn", style: "cursor:pointer" }, "Import backup",
+            h("input", { id: "importfile", type: "file", accept: "application/json,.json", hidden: true,
+              onchange: e => { const f = e.target.files && e.target.files[0]; if (f) importBackup(f); e.target.value = ""; } })))),
+      h("div", { className: "group" }, h("span", { className: "label" }, "Data"), clear)
+    ];
+  }
+
+  document.querySelectorAll(".tabs button").forEach(b => b.addEventListener("click", () => {
+    state.tab = b.dataset.tab; state.confirmClear = false; render(); window.scrollTo(0, 0);
+  }));
+
+  function render() {
+    const active = document.activeElement && app.contains(document.activeElement) ? document.activeElement.id : null;
+    const draft = document.getElementById("newex")?.value;
+    const view = state.tab === "history" ? historyView() : state.tab === "settings" ? settingsView() : todayView();
+    app.replaceChildren(...view.filter(Boolean));
+    if (draft != null && document.getElementById("newex")) document.getElementById("newex").value = draft;
+    if (active && document.getElementById(active)) document.getElementById(active).focus();
+    document.querySelectorAll(".tabs button").forEach(b => {
+      if (b.dataset.tab === state.tab) b.setAttribute("aria-current", "page"); else b.removeAttribute("aria-current");
+    });
+  }
+
+  load();
+  selectExercise(state.ex);
+  showClock(+restlen.value);
+  render();
+  if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
+})();
+</script>
+</body>
+</html>
